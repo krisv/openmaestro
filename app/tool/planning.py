@@ -49,7 +49,7 @@ class PlanningTool(BaseTool):
                 "type": "string",
             },
             "steps": {
-                "description": "List of plan steps. Required for create command, optional for update command.",
+                "description": "List of plan steps. Required for create command, optional for update command. Steps can start with a step_type within brackets if the step should be executed by a specific agent, for example '[maestro] Some step'",
                 "type": "array",
                 "items": {"type": "string"},
             },
@@ -72,6 +72,16 @@ class PlanningTool(BaseTool):
     }
 
     plans: dict = {}  # Dictionary to store plans by plan_id
+    plan_definitions: dict = {
+        "organizational_structure": {
+            "title": "Plan definition for getting organizational structure",
+            "steps": [
+                "Identify the organizational structure and list everyone reporting to the selected user.",
+                "[mini_maestro] Organize the information in a structured format suitable for a text file.",
+                "Save the organized information into a text file named 'red_hat_organizational_structure.md'."
+            ],
+        }
+    }  # Dictionary to store plans by plan_id
     _current_plan_id: Optional[str] = None  # Track the current active plan
 
     async def execute(
@@ -251,6 +261,22 @@ class PlanningTool(BaseTool):
         plan = self.plans[plan_id]
         return ToolResult(output=self._format_plan(plan))
 
+    def _get_active_step(self, plan_id: Optional[str]) -> ToolResult:
+        """Get details of a specific plan."""
+        if not plan_id:
+            # If no plan_id is provided, use the current active plan
+            if not self._current_plan_id:
+                raise ToolError(
+                    "No active plan. Please specify a plan_id or set an active plan."
+                )
+            plan_id = self._current_plan_id
+
+        if plan_id not in self.plans:
+            raise ToolError(f"No plan found with ID: {plan_id}")
+
+        plan = self.plans[plan_id]
+        return ToolResult(output=self._format_plan(plan))
+
     def _set_active_plan(self, plan_id: Optional[str]) -> ToolResult:
         """Set a plan as the active plan."""
         if not plan_id:
@@ -387,3 +413,27 @@ class PlanningTool(BaseTool):
                 output += f"   Notes: {notes}\n"
 
         return output
+
+    def _format_plan_definition(self, plan: Dict) -> str:
+        """Format a plan for display."""
+        output = f"Plan: {plan['title']}\n"
+        output += "=" * len(output) + "\n\n"
+
+        output += "Steps:\n"
+
+        # Add each step with its status and notes
+        for step in plan["steps"]:
+            output += f"[ ] {step}\n"
+        return output
+
+    def _get_plan_definition(self, question: str) -> ToolResult:
+        plan_topic = "default"
+        if "Red Hat organizational structure" in question:
+            plan_topic = "organizational_structure"
+
+        """Get a predefined plan definition."""
+        if plan_topic not in self.plan_definitions:
+            return None
+
+        plan = self.plan_definitions[plan_topic]
+        return self._format_plan_definition(plan)

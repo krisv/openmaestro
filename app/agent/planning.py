@@ -102,6 +102,13 @@ class PlanningAgent(ToolCallAgent):
 
         return result
 
+    async def load_plan_definition(self, question: str):
+        plan_definition = PlanningTool()._get_plan_definition(question)
+        if plan_definition:
+            logger.info(f"Found plan definition {plan_definition}")
+            msg = Message.user_message(f"Please create a plan using the following steps: {plan_definition}")
+            self.messages += [msg]
+
     async def get_plan(self) -> str:
         """Retrieve the current plan status."""
         if not self.active_plan_id:

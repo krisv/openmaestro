@@ -1,9 +1,14 @@
 # Global LLM configuration
 [llm]
 model = "gpt-4o" # The LLM model to use
-#"meta-llama/Llama-3.1-8B-Instruct"
 base_url = "https://api.openai.com/v1" # API endpoint URL
-#"https://llama-3-1-8b-instruct-maas-apicast-production.apps.prod.rhoai.rh-aiservices-bu.com:443/v1"  
+api_key = "PUT_YOUR_KEY_HERE" # Your API key
+max_tokens = 4096     # Maximum number of tokens in the response
+temperature = 0.0     # Controls randomness
+
+[llm.small]
+model = "meta-llama/Llama-3.1-8B-Instruct" # The LLM model to use
+base_url = "https://llama-3-1-8b-instruct-maas-apicast-production.apps.prod.rhoai.rh-aiservices-bu.com:443/v1" # API endpoint URL
 api_key = "PUT_YOUR_KEY_HERE" # Your API key
 max_tokens = 4096     # Maximum number of tokens in the response
 temperature = 0.0     # Controls randomness

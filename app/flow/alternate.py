@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 from app.agent.base import BaseAgent
+from app.agent.planning import PlanningAgent
 from app.flow.base import BaseFlow, PlanStepStatus
 from app.llm import LLM
 from app.logger import logger
@@ -18,39 +19,60 @@ class AlternateFlow(BaseModel):
     active_plan_id: str = Field(default_factory=lambda: f"plan_{int(time.time())}")
     current_step_index: Optional[int] = None
     max_steps: int = 20
-    agents: List[BaseAgent] = None
+    planning_agent: PlanningAgent = None
+    default_agent: BaseAgent = None
+    agents: Dict[str, BaseAgent] = None
     planning_tool: PlanningTool = None
 
     async def execute(self, input_text: str) -> str:
         """Execute the planning flow with agents."""
-        try:
-            result = ""
-            stepCount = 0
-            while True:
-                # Get current step to execute
-                #self.current_step_index, step_info = await self._get_current_step_info()
-                logger.info(f"Executing AlternateFlow {stepCount}")
-                stepCount += 1
-                if (stepCount == self.max_steps):
-                    break
+        #try:
+        result = ""
+        stepCount = 0
+        await self.planning_agent.load_plan_definition(input_text)
+            
+        while True:
+            # Get current step to execute
+            #self.current_step_index, step_info = await self._get_current_step_info()
+            logger.info(f"Executing AlternateFlow {stepCount}")
+            stepCount += 1
+            if (stepCount == self.max_steps):
+                break
 
-                for agent in self.agents:
-                    logger.info(f"Executing agent {agent.name}")
-                    step_result = await self._execute_step(agent)
-                    if self.planning_tool._is_plan_completed(self.active_plan_id):
-                        break
+            logger.info(f"Executing planning agent")
+            step_result = await self._execute_step(self.planning_agent)
+            result += step_result + "\n"
+            if self.planning_tool._is_plan_completed(self.active_plan_id):
+                break
+            
+            type = "default"
+            current_step_index, step_info = await self._get_current_step_info()
+            step_type = step_info.get("type") if step_info else None
+            agent = self.default_agent
+            if step_type:
+                if step_type in self.agents:
+                    agent = self.agents[step_type]
+                    logger.info(f"Found task type {step_type} and agent {agent.name}")
+                else:
+                    logger.info(f"Could not find agent for task type {step_type}, using default")
 
-                    result += step_result + "\n"
+            logger.info(f"Executing agent {agent.name}")
+            step_result = await self._execute_step(agent)
 
-                # Check if agent wants to terminate
-                if self.planning_tool._is_plan_completed(self.active_plan_id):
-                    result += self.planning_tool._get_plan(self.active_plan_id).output
-                    break
+            if self.planning_tool._is_plan_completed(self.active_plan_id):
+                break
 
-            return result
-        except Exception as e:
-            logger.error(f"Error in PlanningFlow: {str(e)}")
-            return f"Execution failed: {str(e)}"
+            result += step_result + "\n"
+
+            # Check if agent wants to terminate
+            if self.planning_tool._is_plan_completed(self.active_plan_id):
+                result += self.planning_tool._get_plan(self.active_plan_id).output
+                break
+
+        return result
+        #except Exception as e:
+        #    logger.error(f"Error in PlanningFlow: {e}")
+        #    return f"Execution failed: {str(e)}"
 
     async def _execute_step(self, agent: BaseAgent) -> str:
         """Execute the current step with the specified agent using agent.run()."""
@@ -112,3 +134,67 @@ class AlternateFlow(BaseModel):
             except Exception as e2:
                 logger.error(f"Error finalizing plan with agent: {e2}")
                 return "Plan completed. Error generating summary."
+
+    async def _get_current_step_info(self) -> tuple[Optional[int], Optional[dict]]:
+        """
+        Parse the current plan to identify the first non-completed step's index and info.
+        Returns (None, None) if no active step is found.
+        """
+        if (
+            not self.active_plan_id
+            or self.active_plan_id not in self.planning_tool.plans
+        ):
+            logger.error(f"Plan with ID {self.active_plan_id} not found")
+            return None, None
+
+        try:
+            # Direct access to plan data from planning tool storage
+            plan_data = self.planning_tool.plans[self.active_plan_id]
+            steps = plan_data.get("steps", [])
+            step_statuses = plan_data.get("step_statuses", [])
+
+            # Find first non-completed step
+            for i, step in enumerate(steps):
+                if i >= len(step_statuses):
+                    status = PlanStepStatus.NOT_STARTED.value
+                else:
+                    status = step_statuses[i]
+
+                if status in PlanStepStatus.get_active_statuses():
+                    # Extract step type/category if available
+                    step_info = {"text": step}
+
+                    # Try to extract step type from the text (e.g., [SEARCH] or [CODE])
+                    import re
+
+                    type_match = re.search(r"\[([A-Za-z_]+)\]", step)
+                    if type_match:
+                        step_info["type"] = type_match.group(1).lower()
+
+                    # Mark current step as in_progress
+                    try:
+                        await self.planning_tool.execute(
+                            command="mark_step",
+                            plan_id=self.active_plan_id,
+                            step_index=i,
+                            step_status=PlanStepStatus.IN_PROGRESS.value,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Error marking step as in_progress: {e}")
+                        # Update step status directly if needed
+                        if i < len(step_statuses):
+                            step_statuses[i] = PlanStepStatus.IN_PROGRESS.value
+                        else:
+                            while len(step_statuses) < i:
+                                step_statuses.append(PlanStepStatus.NOT_STARTED.value)
+                            step_statuses.append(PlanStepStatus.IN_PROGRESS.value)
+
+                        plan_data["step_statuses"] = step_statuses
+
+                    return i, step_info
+
+            return None, None  # No active step found
+
+        except Exception as e:
+            logger.warning(f"Error finding current step index: {e}")
+            return None, None

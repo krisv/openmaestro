@@ -29,7 +29,7 @@ from app.schema import (
     Message,
     ToolChoice,
 )
-from app.llm_mock import MOCK_TOOL_RESPONSES
+from app.llm_mock import mockLLM
 
 
 REASONING_MODELS = ["o1", "o3-mini"]
@@ -56,8 +56,9 @@ class LLM:
     ):
         if not hasattr(self, "client"):  # Only initialize if not already initialized
             llm_config = llm_config or config.llm
-            llm_config = llm_config.get(config_name, llm_config["default"])
+            llm_config = llm_config[config_name]
             self.model = llm_config.model
+            logger.info(f"Initializing llm {self.model}")
             self.max_tokens = llm_config.max_tokens
             self.temperature = llm_config.temperature
             self.api_type = llm_config.api_type
@@ -277,19 +278,20 @@ class LLM:
                 params["temperature"] = temperature or self.temperature
 
             if (self.useMock):
-                if (self.mock_counter < len(MOCK_TOOL_RESPONSES)):
+                if (self.mock_counter < len(mockLLM._get_mock_llm_message(self.model))):
                     #logger.info(f"Sending message in ask_tool: {params}")
-                    response = eval(MOCK_TOOL_RESPONSES[self.mock_counter])
+                    response = eval(mockLLM._get_mock_llm_message(self.model)[self.mock_counter])
                     if (self.waitAfterStep):
                         input("Press enter to continue")
                     #logger.info(f"Response: {str(response)}")
-                elif (self.mock_counter == len(MOCK_TOOL_RESPONSES)):
+                elif (self.mock_counter >= len(mockLLM._get_mock_llm_message(self.model))):
                     #raise ValueError("No mock response found")
                     logger.info(f"Sending message in ask_tool: {params}")
+                    logger.info(f"{self.model}")
                     response = await self.client.chat.completions.create(**params)
                     logger.info(f"Response: {str(response)}")
-                else:
-                    raise ValueError("Only returning one extra answer at a time")
+                #else:
+                #    raise ValueError("Only returning one extra answer at a time")
                 self.mock_counter += 1
             else:
                 logger.info(f"Sending message in ask_tool: {params}")
@@ -315,5 +317,5 @@ class LLM:
                 logger.error(f"API error: {oe}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in ask_tool: {e}")
+            logger.error(f"Unexpected error in ask_tool: {e}", exc_info=True)
             raise

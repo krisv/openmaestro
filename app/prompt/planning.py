@@ -12,6 +12,7 @@ Available tools will vary by task but may include:
 - `planning`: Create, update, and track plans (commands: create, update, mark_step, etc.)
 - `finish`: End the task when complete
 Break tasks into logical steps with clear outcomes. Avoid excessive detail or sub-steps.
+Steps can start with a step_type within brackets if the step should be executed by a specific agent, for example '[maestro] Some step'
 Think about dependencies and verification methods.
 Know when to conclude - don't continue thinking once objectives are met.
 """
