@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Agentic Flow Replay</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #f4f4f4;
+      padding: 20px;
+    }
+    #replay {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      max-width: 900px;
+      margin: auto;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .log-entry {
+      border-left: 4px solid #007acc;
+      padding-left: 10px;
+      margin-bottom: 15px;
+    }
+    .agent {
+      font-weight: bold;
+    }
+    .step {
+      margin-top: 5px;
+    }
+    .tool {
+      font-style: italic;
+      color: #444;
+    }
+    button {
+      padding: 10px 20px;
+      background: #007acc;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-bottom: 20px;
+    }
+    button:disabled {
+      background: #aaa;
+      cursor: default;
+    }
+    #plan {
+      background: #eef6fc;
+      padding: 15px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      border-left: 6px solid #007acc;
+    }
+    .completed { text-decoration: line-through; color: green; }
+    .in-progress { color: orange; }
+    .not-started { color: gray; }
+  </style>
+</head>
+<body>
+  <div id="replay">
+    <h1>Agentic Flow Replay</h1>
+
+    <div id="plan" style="display: none;">
+      <strong id="plan-title">📋 Plan</strong>
+      <ul id="plan-steps"></ul>
+    </div>
+
+    <button id="nextBtn" style="display: none;">Next Step ▶️</button>
+    <div id="log-container"></div>
+  </div>
+
+  <script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const logFile = urlParams.get("log");
+
+    let steps = [];
+    let currentStep = 0;
+    let planSteps = [];
+
+    const nextBtn = document.getElementById("nextBtn");
+    const logContainer = document.getElementById("log-container");
+    const planEl = document.getElementById("plan");
+    const planStepsEl = document.getElementById("plan-steps");
+    const planTitleEl = document.getElementById("plan-title");
+
+    nextBtn.addEventListener("click", () => {
+      if (currentStep < steps.length) {
+        const entry = steps[currentStep];
+
+        if (entry.revealPlan) planEl.style.display = "block";
+        if (entry.planUpdate) updatePlan(entry.planUpdate);
+
+        const icon = entry.agent === "planning" ? "🧠" : "🎵";
+        const div = document.createElement("div");
+        div.className = "log-entry";
+        div.innerHTML = `
+          <div class="agent">${icon} Agent: ${entry.agent}</div>
+          <div class="tool">🔧 Tool: ${entry.tool || 'N/A'}</div>
+          <div class="step">📝 ${entry.description.replace(/\n/g, "<br>")}</div>
+        `;
+        logContainer.prepend(div);
+
+        currentStep++;
+        if (currentStep >= steps.length) {
+          nextBtn.disabled = true;
+          nextBtn.innerText = "Replay Complete ✅";
+        }
+      }
+    });
+
+    function updatePlan(updates) {
+      updates.forEach(({ id, status, notes }) => {
+        const el = document.getElementById(`step-${id}`);
+        let content = el.dataset.text;
+        let prefix = "[ ] ";
+        if (status === "completed") {
+          prefix = "[✓] ";
+          el.className = "completed";
+        } else if (status === "in-progress") {
+          prefix = "[→] ";
+          el.className = "in-progress";
+        } else {
+          el.className = "not-started";
+        }
+        el.innerHTML = prefix + content + (notes ? `<br><small>📝 ${notes}</small>` : "");
+      });
+    }
+
+    function createPlan(title, rawSteps) {
+      planTitleEl.textContent = `📋 ${title}`;
+      planStepsEl.innerHTML = "";
+      planSteps = [];
+
+      rawSteps.forEach((step, idx) => {
+        const li = document.createElement("li");
+        li.className = "not-started";
+        li.id = `step-${idx}`;
+        li.dataset.text = step.text;
+        li.innerHTML = `[ ] ${step.text}`;
+        planStepsEl.appendChild(li);
+        planSteps.push({ id: idx, text: step.text });
+      });
+    }
+
+    function parseLog(text) {
+      const lines = text.split("\n");
+      const parsedSteps = [];
+
+      let currentAgent = null;
+      let currentTool = null;
+      let capturingPlan = false;
+      let planLines = [];
+      let inResultBlock = false;
+      let resultLines = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        if (inResultBlock) {
+          if (line.trim().startsWith("2025-") || i === lines.length - 1) {
+            inResultBlock = false;
+            if (currentTool != 'planning') {
+              parsedSteps.push({
+                agent: currentAgent,
+                tool: currentTool,
+                description: resultLines.join("\n").trim()
+              });
+            }
+            currentTool = null;
+          } else {
+            resultLines.push(line.trim());
+          }
+        }
+
+        // Agent being executed
+        const agentMatch = line.match(/Executing agent (.+)/);
+        if (agentMatch) {
+          currentAgent = agentMatch[1];
+        }
+        // Agent being executed
+        if (line.includes("Executing planning agent")) {
+          currentAgent = 'planning';
+        }
+
+        // Capture result block
+        const planDefMatch = line.match(/Found plan definition Plan: (.+)/);
+        if (planDefMatch) {
+          parsedSteps.push({
+            agent: 'tooling',
+            tool: null,
+            description: "Found plan definition " + planDefMatch[1]
+          });
+          continue;
+        }
+
+        // Tool activation
+        const toolMatch = line.match(/Activating tool: '(.+?)'/);
+        if (toolMatch) {
+          currentTool = toolMatch[1];
+        }
+
+        // Capture result block
+        if (line.includes("completed its mission! Result:")) {
+          inResultBlock = true;
+          resultLines = [];
+          continue;
+        }
+
+        // Capture result block
+        const thinkMatch = line.match(/'s thoughts: (.+)/);
+        if (thinkMatch && 'None' != thinkMatch[1]) {
+          inResultBlock = true;
+          resultLines = [ thinkMatch[1] ];
+          continue;
+        }
+
+        // Plan start
+        if (line.includes("Plan created successfully")) {
+          capturingPlan = true;
+          planLines = [];
+          parsedSteps.push({
+            agent: currentAgent,
+            tool: currentTool,
+            description: "Plan created",
+            revealPlan: true
+          });
+          continue;
+        }
+
+        if (capturingPlan) {
+          if (line.trim().startsWith("Steps:")) {
+            planLines = [];
+          } else if (line.trim().match(/^\d+\.\s+\[.\]/)) {
+            planLines.push(line.trim());
+          } else if (line.includes("===") || line.includes("Progress")) {
+            continue;
+          } else if (planLines.length > 0 && !line.trim().startsWith("Notes")) {
+            // End of plan steps
+            const steps = planLines.map(s => {
+              const parts = s.split("] ");
+              return {
+                status: parts[0].split("[")[1],
+                text: parts.slice(1).join("] ")
+              };
+            });
+            createPlan("Save Organizational Structure Reporting to MarkL", steps);
+            capturingPlan = false;
+          }
+        }
+
+        // Step updated
+        const stepUpdateMatch = line.match(/Step (\d) updated.+plan '(.+?)'/);
+        if (stepUpdateMatch) {
+          const stepId = parseInt(stepUpdateMatch[1]);
+          const notesLine = lines[i + 1] || "";
+          const notes = notesLine.includes("Notes:") ? notesLine.split("Notes:")[1].trim() : null;
+       
+          // Only let 'planning' agent handle plan updates
+          if (currentAgent === "planning") {
+            parsedSteps.push({
+              agent: currentAgent,
+              tool: currentTool,
+              description: `Marked Step ${stepId} as completed`,
+              planUpdate: [{ id: stepId, status: "completed", notes }]
+            });
+          }
+        }
+      }
+
+      return parsedSteps;
+    }
+
+    if (logFile) {
+      fetch(logFile)
+        .then((res) => res.text())
+        .then((text) => {
+          steps = parseLog(text);
+          nextBtn.style.display = "inline-block";
+        })
+        .catch((err) => {
+          logContainer.innerHTML = `<p style="color:red;">❌ Failed to load log file: ${logFile}</p>`;
+        });
+    } else {
+      logContainer.innerHTML = `<p style="color:red;">❗ Please specify a log file using <code>?log=filename.txt</code> in the URL.</p>`;
+    }
+  </script>
+</body>
+</html>
